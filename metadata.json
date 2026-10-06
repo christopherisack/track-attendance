@@ -1,0 +1,6 @@
+{
+  "name": "StaffTrack",
+  "description": "Worker attendance management system to track attendance, shifts, live punch-in/out, leaves, and payroll estimates.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
