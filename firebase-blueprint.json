@@ -1,0 +1,119 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Authenticated user manager profile",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "The UID of the user" },
+        "displayName": { "type": "string", "description": "Display name of user" },
+        "email": { "type": "string", "description": "Email address of user" },
+        "role": { "type": "string", "description": "Role in the organization, e.g. Manager" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp via serverTimestamp" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Update timestamp via serverTimestamp" }
+      },
+      "required": ["userId", "email", "createdAt"]
+    },
+    "Worker": {
+      "title": "Worker",
+      "description": "Worker employee profile record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Document ID of worker" },
+        "userId": { "type": "string", "description": "UID of manager/owner" },
+        "empCode": { "type": "string", "description": "Unique employee code (e.g. EMP-101)" },
+        "fullName": { "type": "string", "description": "Full legal name" },
+        "role": { "type": "string", "description": "Job title / role" },
+        "department": { "type": "string", "description": "Assigned department" },
+        "phone": { "type": "string", "description": "Contact phone number" },
+        "shiftName": { "type": "string", "description": "Assigned shift label" },
+        "hourlyRate": { "type": "number", "description": "Hourly pay rate" },
+        "avatarColorHex": { "type": "string", "description": "Avatar accent color hex" },
+        "isActive": { "type": "boolean", "description": "Active status of worker" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Last updated timestamp" }
+      },
+      "required": ["id", "userId", "empCode", "fullName", "role", "department", "createdAt"]
+    },
+    "AttendanceRecord": {
+      "title": "AttendanceRecord",
+      "description": "Daily attendance record for a worker",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Document ID" },
+        "userId": { "type": "string", "description": "UID of manager/owner" },
+        "workerId": { "type": "string", "description": "Worker document ID reference" },
+        "date": { "type": "string", "description": "Date format YYYY-MM-DD" },
+        "status": { "type": "string", "enum": ["PRESENT", "LATE", "HALF_DAY", "ABSENT", "ON_LEAVE"], "description": "Attendance status" },
+        "checkInTime": { "type": "string", "description": "Clock-in time string" },
+        "checkOutTime": { "type": "string", "description": "Clock-out time string" },
+        "hoursWorked": { "type": "number", "description": "Total regular hours" },
+        "overtimeHours": { "type": "number", "description": "Overtime hours" },
+        "notes": { "type": "string", "description": "Shift remarks/notes" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Update timestamp" }
+      },
+      "required": ["id", "userId", "workerId", "date", "status", "createdAt"]
+    },
+    "Shift": {
+      "title": "Shift",
+      "description": "Shift schedule template definition",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Document ID of shift" },
+        "userId": { "type": "string", "description": "UID of manager/owner" },
+        "name": { "type": "string", "description": "Shift name, e.g. Morning Shift" },
+        "code": { "type": "string", "description": "Shift short code, e.g. M-01" },
+        "startTime": { "type": "string", "description": "Start time e.g. 07:00 AM" },
+        "endTime": { "type": "string", "description": "End time e.g. 03:30 PM" },
+        "status": { "type": "string", "enum": ["ACTIVE", "INACTIVE", "SCHEDULED", "COMPLETED"], "description": "Status of shift" },
+        "breakMinutes": { "type": "integer", "description": "Break duration in minutes" },
+        "colorHex": { "type": "string", "description": "Color hex code" },
+        "description": { "type": "string", "description": "Shift description" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Update timestamp" }
+      },
+      "required": ["id", "userId", "name", "code", "startTime", "endTime", "status", "createdAt"]
+    },
+    "LeaveRecord": {
+      "title": "LeaveRecord",
+      "description": "Absence or leave request record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Document ID of leave" },
+        "userId": { "type": "string", "description": "UID of manager/owner" },
+        "workerId": { "type": "string", "description": "Worker ID reference" },
+        "leaveType": { "type": "string", "description": "Category of leave, e.g. Sick Leave" },
+        "startDate": { "type": "string", "description": "Start date YYYY-MM-DD" },
+        "endDate": { "type": "string", "description": "End date YYYY-MM-DD" },
+        "reason": { "type": "string", "description": "Reason for leave" },
+        "status": { "type": "string", "enum": ["APPROVED", "PENDING", "REJECTED"], "description": "Approval status" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Update timestamp" }
+      },
+      "required": ["id", "userId", "workerId", "leaveType", "startDate", "endDate", "reason", "status", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "User profile collection"
+    },
+    "/users/{userId}/workers/{workerId}": {
+      "schema": "Worker",
+      "description": "Workers roster belonging to the user"
+    },
+    "/users/{userId}/attendance_records/{recordId}": {
+      "schema": "AttendanceRecord",
+      "description": "Daily attendance logs for workers"
+    },
+    "/users/{userId}/shifts/{shiftId}": {
+      "schema": "Shift",
+      "description": "Shift definitions created by user"
+    },
+    "/users/{userId}/leave_records/{leaveId}": {
+      "schema": "LeaveRecord",
+      "description": "Leave and absence requests"
+    }
+  }
+}

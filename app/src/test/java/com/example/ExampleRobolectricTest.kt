@@ -6,12 +6,14 @@ import com.example.data.AppDatabase
 import com.example.data.AttendanceRepository
 import com.example.data.model.AttendanceStatus
 import com.example.data.model.DailyAttendanceStats
+import com.example.data.model.Shift
+import com.example.data.model.ShiftStatus
 import com.example.data.model.Worker
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
-import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -34,7 +36,8 @@ class ExampleRobolectricTest {
         repository = AttendanceRepository(
             database.workerDao(),
             database.attendanceDao(),
-            database.leaveDao()
+            database.leaveDao(),
+            database.shiftDao()
         )
     }
 
@@ -75,6 +78,43 @@ class ExampleRobolectricTest {
         assertEquals(AttendanceStatus.PRESENT.name, record?.status)
         assertEquals("08:00 AM", record?.checkInTime)
         assertEquals(8.0, record?.hoursWorked ?: 0.0, 0.01)
+    }
+
+    @Test
+    fun testShiftEntityAndDaoOperations() = runBlocking {
+        val shiftDao = database.shiftDao()
+        val shift = Shift(
+            name = "Night Security Shift",
+            code = "NS-01",
+            startTime = "10:00 PM",
+            endTime = "06:00 AM",
+            status = ShiftStatus.ACTIVE.name,
+            breakMinutes = 45,
+            colorHex = "#334155",
+            description = "Facility overnight monitoring"
+        )
+
+        val shiftId = shiftDao.insertShift(shift)
+        assertTrue(shiftId > 0)
+
+        val fetchedShift = shiftDao.getShiftByIdOnce(shiftId)
+        assertNotNull(fetchedShift)
+        assertEquals("Night Security Shift", fetchedShift?.name)
+        assertEquals("NS-01", fetchedShift?.code)
+        assertEquals("10:00 PM", fetchedShift?.startTime)
+        assertEquals("06:00 AM", fetchedShift?.endTime)
+        assertEquals("ACTIVE", fetchedShift?.status)
+        assertEquals(45, fetchedShift?.breakMinutes)
+
+        // Update shift status
+        shiftDao.updateShiftStatus(shiftId, ShiftStatus.INACTIVE.name)
+        val updatedShift = shiftDao.getShiftByIdOnce(shiftId)
+        assertEquals("INACTIVE", updatedShift?.status)
+
+        // Delete shift
+        shiftDao.deleteShiftById(shiftId)
+        val deletedShift = shiftDao.getShiftByIdOnce(shiftId)
+        assertNull(deletedShift)
     }
 
     @Test

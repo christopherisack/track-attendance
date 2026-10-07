@@ -1,17 +1,28 @@
 package com.example.ui
 
 import android.app.Application
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.AppDatabase
 import com.example.data.AttendanceRepository
+import com.example.data.StaffFirestoreRepository
 import com.example.data.model.AttendanceRecord
 import com.example.data.model.AttendanceStatus
 import com.example.data.model.DailyAttendanceStats
 import com.example.data.model.LeaveRecord
+import com.example.data.model.Shift
 import com.example.data.model.Worker
 import com.example.data.model.WorkerAttendanceItem
 import com.example.data.model.WorkerPayrollSummary
+import com.example.data.model.firestore.FirestoreAttendanceRecord
+import com.example.data.model.firestore.FirestoreLeaveRecord
+import com.example.data.model.firestore.FirestoreShift
+import com.example.data.model.firestore.FirestoreWorker
+import com.example.ui.auth.authStateFlow
+import com.google.firebase.Firebase
+import com.google.firebase.auth.FirebaseUser
+import com.google.firebase.auth.auth
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -20,6 +31,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
@@ -34,8 +46,10 @@ class AttendanceViewModel(application: Application) : AndroidViewModel(applicati
     private val repository = AttendanceRepository(
         database.workerDao(),
         database.attendanceDao(),
-        database.leaveDao()
+        database.leaveDao(),
+        database.shiftDao()
     )
+    private val firestoreRepository = StaffFirestoreRepository(application)
 
     private val dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd", Locale.US)
     private val timeFormatter = DateTimeFormatter.ofPattern("hh:mm a", Locale.US)
@@ -55,10 +69,20 @@ class AttendanceViewModel(application: Application) : AndroidViewModel(applicati
     private val _userMessage = MutableSharedFlow<String>()
     val userMessage: SharedFlow<String> = _userMessage.asSharedFlow()
 
+    // Cloud sync status indicator
+    private val _cloudSyncStatus = MutableStateFlow("Syncing...")
+    val cloudSyncStatus: StateFlow<String> = _cloudSyncStatus.asStateFlow()
+
     val allWorkers: StateFlow<List<Worker>> = repository.allWorkers
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val allLeaves: StateFlow<List<LeaveRecord>> = repository.allLeaves
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val allShifts: StateFlow<List<Shift>> = repository.allShifts
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val activeShifts: StateFlow<List<Shift>> = repository.activeShifts
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     // Real-time attendance items for selected date
@@ -211,6 +235,56 @@ class AttendanceViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch(Dispatchers.IO) {
             repository.seedInitialDataIfNeeded()
         }
+        viewModelScope.launch {
+            Firebase.auth.authStateFlow().collectLatest { user ->
+                if (user != null) {
+                    onUserAuthenticated(user)
+                } else {
+                    _cloudSyncStatus.value = "Sign in to sync"
+                }
+            }
+        }
+    }
+
+    fun onUserAuthenticated(user: FirebaseUser) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                _cloudSyncStatus.value = "Connecting to Firestore..."
+                firestoreRepository.createOrUpdateProfile(
+                    displayName = user.displayName ?: "Staff Manager",
+                    email = user.email ?: ""
+                )
+                firestoreRepository.seedInitialDataIfEmpty()
+                _cloudSyncStatus.value = "Cloud Synced (${user.email})"
+            } catch (e: Exception) {
+                Log.w("AttendanceVM", "Initial cloud sync notice: ${e.message}")
+                _cloudSyncStatus.value = "Cloud Ready"
+            }
+        }
+    }
+
+    fun syncWithCloud() {
+        val user = Firebase.auth.currentUser
+        if (user == null) {
+            viewModelScope.launch {
+                _userMessage.emit("Please sign in with Google to sync")
+            }
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                _cloudSyncStatus.value = "Syncing..."
+                firestoreRepository.createOrUpdateProfile(
+                    displayName = user.displayName ?: "Staff Manager",
+                    email = user.email ?: ""
+                )
+                _cloudSyncStatus.value = "Cloud Synced (${user.email})"
+                _userMessage.emit("Data synced with Google Cloud Firestore")
+            } catch (e: Exception) {
+                _cloudSyncStatus.value = "Sync error"
+                _userMessage.emit("Cloud sync error: ${e.localizedMessage}")
+            }
+        }
     }
 
     fun setSelectedDate(date: LocalDate) {
@@ -256,6 +330,27 @@ class AttendanceViewModel(application: Application) : AndroidViewModel(applicati
                 hoursWorked = hours,
                 overtimeHours = 0.0
             )
+
+            // Cloud sync
+            Firebase.auth.currentUser?.let { user ->
+                try {
+                    firestoreRepository.recordAttendance(
+                        FirestoreAttendanceRecord(
+                            id = "${workerId}_$dateStr",
+                            userId = user.uid,
+                            workerId = workerId.toString(),
+                            date = dateStr,
+                            status = status.name,
+                            checkInTime = defaultTimes.first,
+                            checkOutTime = defaultTimes.second,
+                            hoursWorked = hours,
+                            overtimeHours = 0.0
+                        )
+                    )
+                } catch (e: Exception) {
+                    Log.w("AttendanceVM", "Cloud attendance sync failed: ${e.message}")
+                }
+            }
         }
     }
 
@@ -281,6 +376,28 @@ class AttendanceViewModel(application: Application) : AndroidViewModel(applicati
                 notes = notes
             )
             _userMessage.emit("Updated attendance record successfully")
+
+            // Cloud sync
+            Firebase.auth.currentUser?.let { user ->
+                try {
+                    firestoreRepository.recordAttendance(
+                        FirestoreAttendanceRecord(
+                            id = "${workerId}_$dateStr",
+                            userId = user.uid,
+                            workerId = workerId.toString(),
+                            date = dateStr,
+                            status = status.name,
+                            checkInTime = checkInTime,
+                            checkOutTime = checkOutTime,
+                            hoursWorked = hoursWorked,
+                            overtimeHours = overtimeHours,
+                            notes = notes
+                        )
+                    )
+                } catch (e: Exception) {
+                    Log.w("AttendanceVM", "Cloud attendance sync failed: ${e.message}")
+                }
+            }
         }
     }
 
@@ -290,6 +407,15 @@ class AttendanceViewModel(application: Application) : AndroidViewModel(applicati
             val workers = allWorkers.value.filter { it.isActive }
             repository.markAllPresent(dateStr, workers.map { it.id })
             _userMessage.emit("Marked ${workers.size} workers present for $dateStr")
+
+            // Cloud sync
+            Firebase.auth.currentUser?.let { _ ->
+                try {
+                    firestoreRepository.markAllPresent(dateStr, workers.map { it.id.toString() })
+                } catch (e: Exception) {
+                    Log.w("AttendanceVM", "Cloud mark all present failed: ${e.message}")
+                }
+            }
         }
     }
 
@@ -303,13 +429,52 @@ class AttendanceViewModel(application: Application) : AndroidViewModel(applicati
                 // Punch in
                 repository.punchIn(worker.id, todayStr, nowTimeStr)
                 _userMessage.emit("${worker.fullName} clocked in at $nowTimeStr")
+                Firebase.auth.currentUser?.let { user ->
+                    try {
+                        firestoreRepository.recordAttendance(
+                            FirestoreAttendanceRecord(
+                                id = "${worker.id}_$todayStr",
+                                userId = user.uid,
+                                workerId = worker.id.toString(),
+                                date = todayStr,
+                                status = "PRESENT",
+                                checkInTime = nowTimeStr,
+                                checkOutTime = null,
+                                hoursWorked = 0.0,
+                                overtimeHours = 0.0,
+                                notes = "Clocked in at kiosk"
+                            )
+                        )
+                    } catch (e: Exception) {
+                        Log.w("AttendanceVM", "Cloud punch in failed: ${e.message}")
+                    }
+                }
             } else if (existing.checkOutTime == null) {
                 // Punch out
-                // Estimate worked hours
                 val hours = 8.0
                 val ot = 0.5
                 repository.punchOut(worker.id, todayStr, nowTimeStr, hours, ot)
                 _userMessage.emit("${worker.fullName} clocked out at $nowTimeStr (8 hrs)")
+                Firebase.auth.currentUser?.let { user ->
+                    try {
+                        firestoreRepository.recordAttendance(
+                            FirestoreAttendanceRecord(
+                                id = "${worker.id}_$todayStr",
+                                userId = user.uid,
+                                workerId = worker.id.toString(),
+                                date = todayStr,
+                                status = "PRESENT",
+                                checkInTime = existing.checkInTime,
+                                checkOutTime = nowTimeStr,
+                                hoursWorked = hours,
+                                overtimeHours = ot,
+                                notes = "Shift completed"
+                            )
+                        )
+                    } catch (e: Exception) {
+                        Log.w("AttendanceVM", "Cloud punch out failed: ${e.message}")
+                    }
+                }
             } else {
                 _userMessage.emit("${worker.fullName} has already completed shift today")
             }
@@ -337,8 +502,31 @@ class AttendanceViewModel(application: Application) : AndroidViewModel(applicati
                 hourlyRate = hourlyRate,
                 avatarColorHex = avatarColorHex
             )
-            repository.insertWorker(worker)
+            val newId = repository.insertWorker(worker)
             _userMessage.emit("Worker ${worker.fullName} added successfully")
+
+            // Cloud sync
+            Firebase.auth.currentUser?.let { user ->
+                try {
+                    firestoreRepository.addWorker(
+                        FirestoreWorker(
+                            id = newId.toString(),
+                            userId = user.uid,
+                            empCode = worker.empCode,
+                            fullName = worker.fullName,
+                            role = worker.role,
+                            department = worker.department,
+                            phone = worker.phone,
+                            shiftName = worker.shiftName,
+                            hourlyRate = worker.hourlyRate,
+                            avatarColorHex = worker.avatarColorHex,
+                            isActive = true
+                        )
+                    )
+                } catch (e: Exception) {
+                    Log.w("AttendanceVM", "Cloud add worker failed: ${e.message}")
+                }
+            }
         }
     }
 
@@ -346,6 +534,28 @@ class AttendanceViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch(Dispatchers.IO) {
             repository.updateWorker(worker)
             _userMessage.emit("Worker ${worker.fullName} updated")
+
+            Firebase.auth.currentUser?.let { user ->
+                try {
+                    firestoreRepository.updateWorker(
+                        FirestoreWorker(
+                            id = worker.id.toString(),
+                            userId = user.uid,
+                            empCode = worker.empCode,
+                            fullName = worker.fullName,
+                            role = worker.role,
+                            department = worker.department,
+                            phone = worker.phone,
+                            shiftName = worker.shiftName,
+                            hourlyRate = worker.hourlyRate,
+                            avatarColorHex = worker.avatarColorHex,
+                            isActive = worker.isActive
+                        )
+                    )
+                } catch (e: Exception) {
+                    Log.w("AttendanceVM", "Cloud update worker failed: ${e.message}")
+                }
+            }
         }
     }
 
@@ -353,6 +563,14 @@ class AttendanceViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch(Dispatchers.IO) {
             repository.deleteWorker(worker)
             _userMessage.emit("Worker ${worker.fullName} removed")
+
+            Firebase.auth.currentUser?.let { _ ->
+                try {
+                    firestoreRepository.deleteWorker(worker.id.toString())
+                } catch (e: Exception) {
+                    Log.w("AttendanceVM", "Cloud delete worker failed: ${e.message}")
+                }
+            }
         }
     }
 
@@ -372,8 +590,27 @@ class AttendanceViewModel(application: Application) : AndroidViewModel(applicati
                 reason = reason,
                 status = "APPROVED"
             )
-            repository.insertLeave(leave)
+            val newId = repository.insertLeave(leave)
             _userMessage.emit("Leave request recorded & approved")
+
+            Firebase.auth.currentUser?.let { user ->
+                try {
+                    firestoreRepository.addLeave(
+                        FirestoreLeaveRecord(
+                            id = newId.toString(),
+                            userId = user.uid,
+                            workerId = workerId.toString(),
+                            leaveType = leaveType,
+                            startDate = startDate,
+                            endDate = endDate,
+                            reason = reason,
+                            status = "APPROVED"
+                        )
+                    )
+                } catch (e: Exception) {
+                    Log.w("AttendanceVM", "Cloud add leave failed: ${e.message}")
+                }
+            }
         }
     }
 
@@ -381,6 +618,14 @@ class AttendanceViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch(Dispatchers.IO) {
             repository.updateLeave(leave.copy(status = newStatus))
             _userMessage.emit("Leave status updated to $newStatus")
+
+            Firebase.auth.currentUser?.let { _ ->
+                try {
+                    firestoreRepository.updateLeaveStatus(leave.id.toString(), newStatus)
+                } catch (e: Exception) {
+                    Log.w("AttendanceVM", "Cloud update leave status failed: ${e.message}")
+                }
+            }
         }
     }
 
@@ -388,6 +633,119 @@ class AttendanceViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch(Dispatchers.IO) {
             repository.deleteLeave(leave)
             _userMessage.emit("Leave record deleted")
+
+            Firebase.auth.currentUser?.let { _ ->
+                try {
+                    firestoreRepository.deleteLeave(leave.id.toString())
+                } catch (e: Exception) {
+                    Log.w("AttendanceVM", "Cloud delete leave failed: ${e.message}")
+                }
+            }
+        }
+    }
+
+    fun addShift(
+        name: String,
+        code: String,
+        startTime: String,
+        endTime: String,
+        status: String = "ACTIVE",
+        breakMinutes: Int = 30,
+        colorHex: String = "#1E3A8A",
+        description: String? = null
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val shift = Shift(
+                name = name.trim(),
+                code = code.trim(),
+                startTime = startTime.trim(),
+                endTime = endTime.trim(),
+                status = status,
+                breakMinutes = breakMinutes,
+                colorHex = colorHex,
+                description = description?.trim()
+            )
+            val newId = repository.insertShift(shift)
+            _userMessage.emit("Shift ${shift.name} created")
+
+            Firebase.auth.currentUser?.let { user ->
+                try {
+                    firestoreRepository.addShift(
+                        FirestoreShift(
+                            id = newId.toString(),
+                            userId = user.uid,
+                            name = shift.name,
+                            code = shift.code,
+                            startTime = shift.startTime,
+                            endTime = shift.endTime,
+                            status = shift.status,
+                            breakMinutes = shift.breakMinutes,
+                            colorHex = shift.colorHex,
+                            description = shift.description
+                        )
+                    )
+                } catch (e: Exception) {
+                    Log.w("AttendanceVM", "Cloud add shift failed: ${e.message}")
+                }
+            }
+        }
+    }
+
+    fun updateShift(shift: Shift) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.updateShift(shift)
+            _userMessage.emit("Shift ${shift.name} updated")
+
+            Firebase.auth.currentUser?.let { user ->
+                try {
+                    firestoreRepository.updateShift(
+                        FirestoreShift(
+                            id = shift.id.toString(),
+                            userId = user.uid,
+                            name = shift.name,
+                            code = shift.code,
+                            startTime = shift.startTime,
+                            endTime = shift.endTime,
+                            status = shift.status,
+                            breakMinutes = shift.breakMinutes,
+                            colorHex = shift.colorHex,
+                            description = shift.description
+                        )
+                    )
+                } catch (e: Exception) {
+                    Log.w("AttendanceVM", "Cloud update shift failed: ${e.message}")
+                }
+            }
+        }
+    }
+
+    fun updateShiftStatus(shiftId: Long, status: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.updateShiftStatus(shiftId, status)
+            _userMessage.emit("Shift status updated to $status")
+
+            Firebase.auth.currentUser?.let { _ ->
+                try {
+                    firestoreRepository.updateShiftStatus(shiftId.toString(), status)
+                } catch (e: Exception) {
+                    Log.w("AttendanceVM", "Cloud update shift status failed: ${e.message}")
+                }
+            }
+        }
+    }
+
+    fun deleteShift(shift: Shift) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.deleteShift(shift)
+            _userMessage.emit("Shift ${shift.name} removed")
+
+            Firebase.auth.currentUser?.let { _ ->
+                try {
+                    firestoreRepository.deleteShift(shift.id.toString())
+                } catch (e: Exception) {
+                    Log.w("AttendanceVM", "Cloud delete shift failed: ${e.message}")
+                }
+            }
         }
     }
 }

@@ -37,6 +37,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.example.data.model.Shift
 import com.example.data.model.Worker
 
 private val COLOR_CHOICES = listOf(
@@ -48,7 +49,7 @@ private val DEPARTMENT_CHOICES = listOf(
     "Operations", "Production", "Logistics", "Maintenance", "QA & Compliance", "Administration"
 )
 
-private val SHIFT_CHOICES = listOf(
+private val DEFAULT_SHIFT_CHOICES = listOf(
     "Morning (07:00 - 15:30)",
     "General (08:30 - 17:00)",
     "Evening (15:00 - 23:30)",
@@ -58,6 +59,7 @@ private val SHIFT_CHOICES = listOf(
 @Composable
 fun AddWorkerDialog(
     workerToEdit: Worker? = null,
+    availableShifts: List<Shift> = emptyList(),
     onDismiss: () -> Unit,
     onSave: (
         empCode: String,
@@ -70,12 +72,20 @@ fun AddWorkerDialog(
         avatarColorHex: String
     ) -> Unit
 ) {
+    val shiftOptions = remember(availableShifts) {
+        if (availableShifts.isNotEmpty()) {
+            availableShifts.filter { it.status == "ACTIVE" }.map { "${it.name} (${it.startTime} - ${it.endTime})" }
+        } else {
+            DEFAULT_SHIFT_CHOICES
+        }
+    }
+
     var fullName by remember { mutableStateOf(workerToEdit?.fullName ?: "") }
     var empCode by remember { mutableStateOf(workerToEdit?.empCode ?: "") }
     var role by remember { mutableStateOf(workerToEdit?.role ?: "") }
     var department by remember { mutableStateOf(workerToEdit?.department ?: "Operations") }
     var phone by remember { mutableStateOf(workerToEdit?.phone ?: "") }
-    var shiftName by remember { mutableStateOf(workerToEdit?.shiftName ?: "Morning (07:00 - 15:30)") }
+    var shiftName by remember { mutableStateOf(workerToEdit?.shiftName ?: shiftOptions.firstOrNull() ?: "Morning (07:00 - 15:30)") }
     var hourlyRateText by remember { mutableStateOf(workerToEdit?.hourlyRate?.toString() ?: "20.00") }
     var selectedColor by remember { mutableStateOf(workerToEdit?.avatarColorHex ?: COLOR_CHOICES.first()) }
     var showError by remember { mutableStateOf(false) }
@@ -179,7 +189,7 @@ fun AddWorkerDialog(
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.SemiBold
                 )
-                SHIFT_CHOICES.forEach { shift ->
+                shiftOptions.forEach { shift ->
                     FilterChip(
                         selected = shiftName == shift,
                         onClick = { shiftName = shift },

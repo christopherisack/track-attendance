@@ -2,10 +2,13 @@ package com.example.data
 
 import com.example.data.dao.AttendanceDao
 import com.example.data.dao.LeaveDao
+import com.example.data.dao.ShiftDao
 import com.example.data.dao.WorkerDao
 import com.example.data.model.AttendanceRecord
 import com.example.data.model.AttendanceStatus
 import com.example.data.model.LeaveRecord
+import com.example.data.model.Shift
+import com.example.data.model.ShiftStatus
 import com.example.data.model.Worker
 import kotlinx.coroutines.flow.Flow
 import java.time.LocalDate
@@ -14,11 +17,14 @@ import java.time.format.DateTimeFormatter
 class AttendanceRepository(
     private val workerDao: WorkerDao,
     private val attendanceDao: AttendanceDao,
-    private val leaveDao: LeaveDao
+    private val leaveDao: LeaveDao,
+    private val shiftDao: ShiftDao
 ) {
     val allWorkers: Flow<List<Worker>> = workerDao.getAllWorkers()
     val activeWorkers: Flow<List<Worker>> = workerDao.getActiveWorkers()
     val allLeaves: Flow<List<LeaveRecord>> = leaveDao.getAllLeaves()
+    val allShifts: Flow<List<Shift>> = shiftDao.getAllShifts()
+    val activeShifts: Flow<List<Shift>> = shiftDao.getActiveShifts()
 
     fun getAttendanceForDate(date: String): Flow<List<AttendanceRecord>> =
         attendanceDao.getAttendanceForDate(date)
@@ -136,7 +142,61 @@ class AttendanceRepository(
 
     suspend fun deleteLeave(leave: LeaveRecord) = leaveDao.deleteLeave(leave)
 
+    suspend fun insertShift(shift: Shift): Long = shiftDao.insertShift(shift)
+
+    suspend fun updateShift(shift: Shift) = shiftDao.updateShift(shift)
+
+    suspend fun updateShiftStatus(id: Long, status: String) = shiftDao.updateShiftStatus(id, status)
+
+    suspend fun deleteShift(shift: Shift) = shiftDao.deleteShift(shift)
+
     suspend fun seedInitialDataIfNeeded() {
+        if (shiftDao.getShiftCount() == 0) {
+            val sampleShifts = listOf(
+                Shift(
+                    name = "Morning Shift",
+                    code = "M-01",
+                    startTime = "07:00 AM",
+                    endTime = "03:30 PM",
+                    status = ShiftStatus.ACTIVE.name,
+                    breakMinutes = 30,
+                    colorHex = "#1E40AF",
+                    description = "Early morning production & machine operation shift"
+                ),
+                Shift(
+                    name = "General Day Shift",
+                    code = "G-01",
+                    startTime = "08:30 AM",
+                    endTime = "05:00 PM",
+                    status = ShiftStatus.ACTIVE.name,
+                    breakMinutes = 45,
+                    colorHex = "#0F766E",
+                    description = "Standard operational and administrative workday"
+                ),
+                Shift(
+                    name = "Evening Shift",
+                    code = "E-01",
+                    startTime = "03:00 PM",
+                    endTime = "11:30 PM",
+                    status = ShiftStatus.ACTIVE.name,
+                    breakMinutes = 30,
+                    colorHex = "#D97706",
+                    description = "Afternoon/evening assembly and logistics dispatch"
+                ),
+                Shift(
+                    name = "Night Shift",
+                    code = "N-01",
+                    startTime = "11:00 PM",
+                    endTime = "07:30 AM",
+                    status = ShiftStatus.ACTIVE.name,
+                    breakMinutes = 45,
+                    colorHex = "#7C3AED",
+                    description = "Overnight facility maintenance and automated processing"
+                )
+            )
+            shiftDao.insertShifts(sampleShifts)
+        }
+
         if (workerDao.getWorkerCount() > 0) return
 
         val sampleWorkers = listOf(

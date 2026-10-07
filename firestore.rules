@@ -1,0 +1,161 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default deny all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidUserProfile(data) {
+      return data.userId is string && data.userId.size() <= 128 &&
+             (!('displayName' in data) || data.displayName == null || (data.displayName is string && data.displayName.size() <= 100)) &&
+             (!('email' in data) || (data.email is string && data.email.size() <= 150)) &&
+             (!('role' in data) || (data.role is string && data.role.size() <= 50));
+    }
+
+    function isValidWorker(data) {
+      return data.id is string && data.id.size() <= 128 &&
+             data.userId is string && data.userId.size() <= 128 &&
+             data.empCode is string && data.empCode.size() > 0 && data.empCode.size() <= 50 &&
+             data.fullName is string && data.fullName.size() > 0 && data.fullName.size() <= 100 &&
+             data.role is string && data.role.size() > 0 && data.role.size() <= 100 &&
+             data.department is string && data.department.size() > 0 && data.department.size() <= 100 &&
+             (!('phone' in data) || data.phone == null || (data.phone is string && data.phone.size() <= 50)) &&
+             (!('shiftName' in data) || (data.shiftName is string && data.shiftName.size() <= 100)) &&
+             (!('hourlyRate' in data) || data.hourlyRate is number) &&
+             (!('avatarColorHex' in data) || (data.avatarColorHex is string && data.avatarColorHex.size() <= 20)) &&
+             (!('isActive' in data) || data.isActive is bool);
+    }
+
+    function isValidAttendance(data) {
+      return data.id is string && data.id.size() <= 128 &&
+             data.userId is string && data.userId.size() <= 128 &&
+             data.workerId is string && data.workerId.size() <= 128 &&
+             data.date is string && data.date.size() == 10 &&
+             data.status in ['PRESENT', 'LATE', 'HALF_DAY', 'ABSENT', 'ON_LEAVE'] &&
+             (!('checkInTime' in data) || data.checkInTime == null || (data.checkInTime is string && data.checkInTime.size() <= 30)) &&
+             (!('checkOutTime' in data) || data.checkOutTime == null || (data.checkOutTime is string && data.checkOutTime.size() <= 30)) &&
+             (!('hoursWorked' in data) || data.hoursWorked is number) &&
+             (!('overtimeHours' in data) || data.overtimeHours is number) &&
+             (!('notes' in data) || data.notes == null || (data.notes is string && data.notes.size() <= 500));
+    }
+
+    function isValidShift(data) {
+      return data.id is string && data.id.size() <= 128 &&
+             data.userId is string && data.userId.size() <= 128 &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+             data.code is string && data.code.size() > 0 && data.code.size() <= 50 &&
+             data.startTime is string && data.startTime.size() > 0 && data.startTime.size() <= 30 &&
+             data.endTime is string && data.endTime.size() > 0 && data.endTime.size() <= 30 &&
+             data.status in ['ACTIVE', 'INACTIVE', 'SCHEDULED', 'COMPLETED'] &&
+             (!('breakMinutes' in data) || data.breakMinutes is int) &&
+             (!('colorHex' in data) || (data.colorHex is string && data.colorHex.size() <= 20)) &&
+             (!('description' in data) || data.description == null || (data.description is string && data.description.size() <= 500));
+    }
+
+    function isValidLeave(data) {
+      return data.id is string && data.id.size() <= 128 &&
+             data.userId is string && data.userId.size() <= 128 &&
+             data.workerId is string && data.workerId.size() <= 128 &&
+             data.leaveType is string && data.leaveType.size() > 0 && data.leaveType.size() <= 100 &&
+             data.startDate is string && data.startDate.size() == 10 &&
+             data.endDate is string && data.endDate.size() == 10 &&
+             data.reason is string && data.reason.size() <= 500 &&
+             data.status in ['APPROVED', 'PENDING', 'REJECTED'];
+    }
+
+    // User Profile Document
+    match /users/{userId} {
+      allow get: if isOwner(userId);
+      allow create: if isOwner(userId) &&
+                       incoming().userId == userId &&
+                       incoming().createdAt is timestamp &&
+                       incoming().createdAt <= request.time &&
+                       isValidUserProfile(incoming());
+      allow update: if isOwner(userId) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       isValidUserProfile(incoming());
+      allow delete: if isOwner(userId);
+
+      // Subcollection: Workers
+      match /workers/{workerId} {
+        allow get, list: if isOwner(userId);
+        allow create: if isOwner(userId) &&
+                         incoming().userId == userId &&
+                         incoming().createdAt is timestamp &&
+                         incoming().createdAt <= request.time &&
+                         isValidWorker(incoming());
+        allow update: if isOwner(userId) &&
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt &&
+                         isValidWorker(incoming());
+        allow delete: if isOwner(userId);
+      }
+
+      // Subcollection: Attendance Records
+      match /attendance_records/{recordId} {
+        allow get, list: if isOwner(userId);
+        allow create: if isOwner(userId) &&
+                         incoming().userId == userId &&
+                         incoming().createdAt is timestamp &&
+                         incoming().createdAt <= request.time &&
+                         isValidAttendance(incoming());
+        allow update: if isOwner(userId) &&
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt &&
+                         isValidAttendance(incoming());
+        allow delete: if isOwner(userId);
+      }
+
+      // Subcollection: Shifts
+      match /shifts/{shiftId} {
+        allow get, list: if isOwner(userId);
+        allow create: if isOwner(userId) &&
+                         incoming().userId == userId &&
+                         incoming().createdAt is timestamp &&
+                         incoming().createdAt <= request.time &&
+                         isValidShift(incoming());
+        allow update: if isOwner(userId) &&
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt &&
+                         isValidShift(incoming());
+        allow delete: if isOwner(userId);
+      }
+
+      // Subcollection: Leaves
+      match /leave_records/{leaveId} {
+        allow get, list: if isOwner(userId);
+        allow create: if isOwner(userId) &&
+                         incoming().userId == userId &&
+                         incoming().createdAt is timestamp &&
+                         incoming().createdAt <= request.time &&
+                         isValidLeave(incoming());
+        allow update: if isOwner(userId) &&
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt &&
+                         isValidLeave(incoming());
+        allow delete: if isOwner(userId);
+      }
+    }
+  }
+}

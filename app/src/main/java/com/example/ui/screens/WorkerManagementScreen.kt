@@ -54,13 +54,16 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.model.Shift
 import com.example.data.model.Worker
 import com.example.ui.components.AddWorkerDialog
+import com.example.ui.components.ShiftManagementDialog
 import com.example.ui.components.WorkerAvatar
 
 @Composable
 fun WorkerManagementScreen(
     workers: List<Worker>,
+    shifts: List<Shift> = emptyList(),
     onAddWorker: (
         empCode: String,
         fullName: String,
@@ -73,11 +76,25 @@ fun WorkerManagementScreen(
     ) -> Unit,
     onUpdateWorker: (Worker) -> Unit,
     onDeleteWorker: (Worker) -> Unit,
+    onAddShift: (
+        name: String,
+        code: String,
+        startTime: String,
+        endTime: String,
+        status: String,
+        breakMinutes: Int,
+        colorHex: String,
+        description: String?
+    ) -> Unit = { _, _, _, _, _, _, _, _ -> },
+    onUpdateShift: (Shift) -> Unit = {},
+    onUpdateShiftStatus: (shiftId: Long, status: String) -> Unit = { _, _ -> },
+    onDeleteShift: (Shift) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var searchQuery by remember { mutableStateOf("") }
     var selectedDept by remember { mutableStateOf("All") }
     var showAddDialog by remember { mutableStateOf(false) }
+    var showShiftsDialog by remember { mutableStateOf(false) }
     var workerToEdit by remember { mutableStateOf<Worker?>(null) }
     var workerToDelete by remember { mutableStateOf<Worker?>(null) }
 
@@ -155,6 +172,23 @@ fun WorkerManagementScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
+                    }
+
+                    OutlinedButton(
+                        onClick = { showShiftsDialog = true },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 8.dp)
+                            .testTag("btn_manage_shifts_dialog"),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Schedule,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Manage Shifts (${shifts.count { it.status == "ACTIVE" }} Active)")
                     }
                 }
             }
@@ -364,6 +398,7 @@ fun WorkerManagementScreen(
 
     if (showAddDialog) {
         AddWorkerDialog(
+            availableShifts = shifts,
             onDismiss = { showAddDialog = false },
             onSave = { empCode, fullName, role, department, phone, shiftName, hourlyRate, avatarColorHex ->
                 onAddWorker(empCode, fullName, role, department, phone, shiftName, hourlyRate, avatarColorHex)
@@ -375,6 +410,7 @@ fun WorkerManagementScreen(
     workerToEdit?.let { worker ->
         AddWorkerDialog(
             workerToEdit = worker,
+            availableShifts = shifts,
             onDismiss = { workerToEdit = null },
             onSave = { empCode, fullName, role, department, phone, shiftName, hourlyRate, avatarColorHex ->
                 onUpdateWorker(
@@ -391,6 +427,17 @@ fun WorkerManagementScreen(
                 )
                 workerToEdit = null
             }
+        )
+    }
+
+    if (showShiftsDialog) {
+        ShiftManagementDialog(
+            shifts = shifts,
+            onDismiss = { showShiftsDialog = false },
+            onAddShift = onAddShift,
+            onUpdateShift = onUpdateShift,
+            onUpdateStatus = onUpdateShiftStatus,
+            onDeleteShift = onDeleteShift
         )
     }
 
